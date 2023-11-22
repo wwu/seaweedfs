@@ -11,6 +11,7 @@ import (
 	"io"
 	"strings"
 
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -44,6 +45,8 @@ func (store *TikvStore) Initialize(config util.Configuration, prefix string) err
 	key := config.GetString(prefix + "key_path")
 	verify_cn := strings.Split(config.GetString(prefix+"verify_cn"), ",")
 	pdAddrs := strings.Split(config.GetString(prefix+"pdaddrs"), ",")
+	v2_api := config.GetBool(prefix + "v2_api")
+	v2_keyspace := config.GetString(prefix + "v2_keyspace")
 
 	drc := config.GetInt(prefix + "deleterange_concurrency")
 	if drc <= 0 {
@@ -51,14 +54,23 @@ func (store *TikvStore) Initialize(config util.Configuration, prefix string) err
 	}
 	store.onePC = config.GetBool(prefix + "enable_1pc")
 	store.deleteRangeConcurrency = drc
-	return store.initialize(ca, cert, key, verify_cn, pdAddrs)
+	return store.initialize(ca, cert, key, verify_cn, pdAddrs, v2_api, v2_keyspace)
 }
 
-func (store *TikvStore) initialize(ca, cert, key string, verify_cn, pdAddrs []string) error {
+func (store *TikvStore) initialize(ca, cert, key string, verify_cn, pdAddrs []string, v2_api bool, v2_keyspace string) error {
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.Security = config.NewSecurity(ca, cert, key, verify_cn)
 	})
-	client, err := txnkv.NewClient(pdAddrs)
+	var client *txnkv.Client
+	var err error
+	if v2_api {
+		if v2_keyspace == "" {
+			v2_keyspace = "DEFAULT"
+		}
+		client, err = txnkv.NewClient(pdAddrs, txnkv.WithAPIVersion(kvrpcpb.APIVersion_V2), txnkv.WithKeyspace(v2_keyspace))
+	} else {
+		client, err = txnkv.NewClient(pdAddrs)
+	}
 	store.client = client
 	return err
 }

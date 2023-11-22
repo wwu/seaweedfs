@@ -349,3 +349,7 @@ cert_path=""
 key_path=""
 # The name list used to verify the cn name
 verify_cn=""
+# if TiKV is deployed with API V2
+v2_api=true
+# TiKV API V2's default keyspace
+v2_keyspace=DEFAULT
