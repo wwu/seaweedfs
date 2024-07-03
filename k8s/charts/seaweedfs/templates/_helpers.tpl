@@ -49,25 +49,7 @@ Inject extra environment vars in the format key:value, if populated
 {{- $imageOverride := .Values.filer.imageOverride -}}
 {{- printf "%s" $imageOverride -}}
 {{- else -}}
-{{- $registryName := default .Values.image.registry .Values.global.localRegistry | toString -}}
-{{- $repositoryName := .Values.image.repository | toString -}}
-{{- $name := .Values.global.imageName | toString -}}
-{{- $tag := .Chart.AppVersion | toString -}}
-{{- printf "%s%s%s:%s" $registryName $repositoryName $name $tag -}}
-{{- end -}}
-{{- end -}}
-
-{{/* Return the proper dbSchema image */}}
-{{- define "filer.dbSchema.image" -}}
-{{- if .Values.filer.dbSchema.imageOverride -}}
-{{- $imageOverride := .Values.filer.dbSchema.imageOverride -}}
-{{- printf "%s" $imageOverride -}}
-{{- else -}}
-{{- $registryName := default .Values.global.registry .Values.global.localRegistry | toString -}}
-{{- $repositoryName := .Values.global.repository | toString -}}
-{{- $name := .Values.filer.dbSchema.imageName | toString -}}
-{{- $tag := .Values.filer.dbSchema.imageTag | toString -}}
-{{- printf "%s%s%s:%s" $registryName $repositoryName $name $tag -}}
+{{- include "common.image" . }}
 {{- end -}}
 {{- end -}}
 
@@ -77,11 +59,7 @@ Inject extra environment vars in the format key:value, if populated
 {{- $imageOverride := .Values.master.imageOverride -}}
 {{- printf "%s" $imageOverride -}}
 {{- else -}}
-{{- $registryName := default .Values.image.registry .Values.global.localRegistry | toString -}}
-{{- $repositoryName := .Values.image.repository | toString -}}
-{{- $name := .Values.global.imageName | toString -}}
-{{- $tag := .Chart.AppVersion | toString -}}
-{{- printf "%s%s%s:%s" $registryName $repositoryName $name $tag -}}
+{{- include "common.image" . }}
 {{- end -}}
 {{- end -}}
 
@@ -91,11 +69,7 @@ Inject extra environment vars in the format key:value, if populated
 {{- $imageOverride := .Values.s3.imageOverride -}}
 {{- printf "%s" $imageOverride -}}
 {{- else -}}
-{{- $registryName := default .Values.image.registry .Values.global.localRegistry | toString -}}
-{{- $repositoryName := .Values.image.repository | toString -}}
-{{- $name := .Values.global.imageName | toString -}}
-{{- $tag := .Chart.AppVersion | toString -}}
-{{- printf "%s%s%s:%s" $registryName $repositoryName $name $tag -}}
+{{- include "common.image" . }}
 {{- end -}}
 {{- end -}}
 
@@ -105,11 +79,20 @@ Inject extra environment vars in the format key:value, if populated
 {{- $imageOverride := .Values.volume.imageOverride -}}
 {{- printf "%s" $imageOverride -}}
 {{- else -}}
-{{- $registryName := default .Values.image.registry .Values.global.localRegistry | toString -}}
+{{- include "common.image" . }}
+{{- end -}}
+{{- end -}}
+
+{{/* Computes the container image name for all components (if they are not overridden) */}}
+{{- define "common.image" -}}
+{{- $registryName := default .Values.image.registry .Values.global.registry | toString -}}
 {{- $repositoryName := .Values.image.repository | toString -}}
 {{- $name := .Values.global.imageName | toString -}}
 {{- $tag := .Chart.AppVersion | toString -}}
-{{- printf "%s%s%s:%s" $registryName $repositoryName $name $tag -}}
+{{- if $registryName -}}
+{{- printf "%s/%s%s:%s" $registryName $repositoryName $name $tag -}}
+{{- else -}}
+{{- printf "%s%s:%s" $repositoryName $name $tag -}}
 {{- end -}}
 {{- end -}}
 
@@ -122,31 +105,9 @@ Inject extra environment vars in the format key:value, if populated
 {{- end -}}
 {{- end -}}
 
-{{/* check if any Volume HostPath exists */}}
-{{- define "volume.hostpath_exists" -}}
-{{- if or (or (eq .Values.volume.data.type "hostPath") (and (eq .Values.volume.idx.type "hostPath") .Values.volume.dir_idx )) (eq .Values.volume.logs.type "hostPath") -}}
-{{- printf "true" -}}
-{{- else -}}
-{{- if or .Values.global.enableSecurity .Values.volume.extraVolumes -}}
-{{- printf "true" -}}
-{{- else -}}
-{{- printf "" -}}
-{{- end -}}
-{{- end -}}
-{{- end -}}
-
 {{/* check if any Filer PVC exists */}}
 {{- define "filer.pvc_exists" -}}
 {{- if or (eq .Values.filer.data.type "persistentVolumeClaim") (eq .Values.filer.logs.type "persistentVolumeClaim") -}}
-{{- printf "true" -}}
-{{- else -}}
-{{- printf "" -}}
-{{- end -}}
-{{- end -}}
-
-{{/* check if any Filer HostPath exists */}}
-{{- define "filer.hostpath_exists" -}}
-{{- if or (eq .Values.filer.data.type "hostPath") (eq .Values.filer.logs.type "hostPath") -}}
 {{- printf "true" -}}
 {{- else -}}
 {{- printf "" -}}
@@ -162,31 +123,9 @@ Inject extra environment vars in the format key:value, if populated
 {{- end -}}
 {{- end -}}
 
-{{/* check if any Master HostPath exists */}}
-{{- define "master.hostpath_exists" -}}
-{{- if or (eq .Values.master.data.type "hostPath") (eq .Values.master.logs.type "hostPath") -}}
-{{- printf "true" -}}
-{{- else -}}
-{{- if or .Values.global.enableSecurity .Values.volume.extraVolumes -}}
-{{- printf "true" -}}
-{{- else -}}
-{{- printf "" -}}
-{{- end -}}
-{{- end -}}
-{{- end -}}
-
-{{/* check if any Master existingClaim is defined */}}
-{{- define "master.existing_claims" -}}
-{{- if or (eq .Values.master.data.type "existingClaim") (eq .Values.master.logs.type "existingClaim") -}}
-{{- printf "true" -}}
-{{- else -}}
-{{- printf "" -}}
-{{- end -}}
-{{- end -}}
-
 {{/* check if any InitContainers exist for Volumes */}}
 {{- define "volume.initContainers_exists" -}}
-{{- if or (not (empty .Values.volume.dir_idx )) (not (empty .Values.volume.initContainers )) -}}
+{{- if or (not (empty .Values.volume.idx )) (not (empty .Values.volume.initContainers )) -}}
 {{- printf "true" -}}
 {{- else -}}
 {{- printf "" -}}
@@ -205,5 +144,24 @@ imagePullSecrets:
   - name: {{ . }}
 {{- end }}
 {{- end }}
+{{- end }}
+{{- end -}}
+
+{{/*
+Renders a value that contains template perhaps with scope if the scope is present.
+Usage:
+{{ include "common.tplvalues.render" ( dict "value" .Values.path.to.the.Value "context" $ ) }}
+{{ include "common.tplvalues.render" ( dict "value" .Values.path.to.the.Value "context" $ "scope" $app ) }}
+*/}}
+{{- define "common.tplvalues.render" -}}
+{{- $value := typeIs "string" .value | ternary .value (.value | toYaml) }}
+{{- if contains "{{" (toJson .value) }}
+  {{- if .scope }}
+      {{- tpl (cat "{{- with $.RelativeScope -}}" $value "{{- end }}") (merge (dict "RelativeScope" .scope) .context) }}
+  {{- else }}
+    {{- tpl $value .context }}
+  {{- end }}
+{{- else }}
+    {{- $value }}
 {{- end }}
 {{- end -}}

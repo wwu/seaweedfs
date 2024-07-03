@@ -85,8 +85,7 @@ const (
 func doFilerBackup(grpcDialOption grpc.DialOption, backupOption *FilerBackupOptions, clientId int32, clientEpoch int32) error {
 
 	// find data sink
-	config := util.GetViper()
-	dataSink := findSink(config)
+	dataSink := findSink(util.GetViper())
 	if dataSink == nil {
 		return fmt.Errorf("no data sink configured in replication.toml")
 	}
@@ -159,7 +158,7 @@ func doFilerBackup(grpcDialOption grpc.DialOption, backupOption *FilerBackupOpti
 		DirectoriesToWatch:     nil,
 		StartTsNs:              startFrom.UnixNano(),
 		StopTsNs:               0,
-		EventErrorType:         pb.TrivialOnError,
+		EventErrorType:         pb.RetryForeverOnError,
 	}
 
 	return pb.FollowMetadata(sourceFiler, grpcDialOption, metadataFollowOption, processEventFnWithOffset)

@@ -3,6 +3,7 @@ package iamapi
 import (
 	"crypto/sha1"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math/rand"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
@@ -31,6 +33,7 @@ const (
 	StatementActionReadAcp  = "GetBucketAcl"
 	StatementActionList     = "List*"
 	StatementActionTagging  = "Tagging*"
+	StatementActionDelete   = "DeleteBucket*"
 )
 
 var (
@@ -56,6 +59,8 @@ func MapToStatementAction(action string) string {
 		return s3_constants.ACTION_LIST
 	case StatementActionTagging:
 		return s3_constants.ACTION_TAGGING
+	case StatementActionDelete:
+		return s3_constants.ACTION_DELETE_BUCKET
 	default:
 		return ""
 	}
@@ -77,6 +82,8 @@ func MapToIdentitiesAction(action string) string {
 		return StatementActionList
 	case s3_constants.ACTION_TAGGING:
 		return StatementActionTagging
+	case s3_constants.ACTION_DELETE_BUCKET:
+		return StatementActionDelete
 	default:
 		return ""
 	}
@@ -424,7 +431,7 @@ func (iama *IamApiServer) DoActions(w http.ResponseWriter, r *http.Request) {
 	}
 	values := r.PostForm
 	s3cfg := &iam_pb.S3ApiConfiguration{}
-	if err := iama.s3ApiConfig.GetS3ApiConfiguration(s3cfg); err != nil {
+	if err := iama.s3ApiConfig.GetS3ApiConfiguration(s3cfg); err != nil && !errors.Is(err, filer_pb.ErrNotFound) {
 		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 		return
 	}

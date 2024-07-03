@@ -31,21 +31,22 @@ var (
 )
 
 type CopyOptions struct {
-	include          *string
-	replication      *string
-	collection       *string
-	ttl              *string
-	diskType         *string
-	maxMB            *int
-	masterClient     *wdclient.MasterClient
-	concurrentFiles  *int
-	concurrentChunks *int
-	grpcDialOption   grpc.DialOption
-	masters          []string
-	cipher           bool
-	ttlSec           int32
-	checkSize        *bool
-	verbose          *bool
+	include            *string
+	replication        *string
+	collection         *string
+	ttl                *string
+	diskType           *string
+	maxMB              *int
+	masterClient       *wdclient.MasterClient
+	concurrentFiles    *int
+	concurrentChunks   *int
+	grpcDialOption     grpc.DialOption
+	masters            []string
+	cipher             bool
+	ttlSec             int32
+	checkSize          *bool
+	verbose            *bool
+	volumeServerAccess *string
 }
 
 func init() {
@@ -61,6 +62,7 @@ func init() {
 	copy.concurrentChunks = cmdFilerCopy.Flag.Int("concurrentChunks", 8, "concurrent chunk copy goroutines for each file")
 	copy.checkSize = cmdFilerCopy.Flag.Bool("check.size", false, "copy when the target file size is different from the source file")
 	copy.verbose = cmdFilerCopy.Flag.Bool("verbose", false, "print out details during copying")
+	copy.volumeServerAccess = cmdFilerCopy.Flag.String("volumeServerAccess", "direct", "access volume servers by [direct|publicUrl]")
 }
 
 var cmdFilerCopy = &Command{
@@ -470,7 +472,7 @@ func (worker *FileCopyWorker) uploadFileInChunks(task FileCopyTask, f *os.File, 
 		for _, chunk := range chunks {
 			fileIds = append(fileIds, chunk.FileId)
 		}
-		operation.DeleteFiles(func() pb.ServerAddress {
+		operation.DeleteFiles(func(_ context.Context) pb.ServerAddress {
 			return pb.ServerAddress(copy.masters[0])
 		}, false, worker.options.grpcDialOption, fileIds)
 		return uploadError
@@ -580,6 +582,9 @@ func (worker *FileCopyWorker) WithFilerClient(streamingMode bool, fn func(filer_
 }
 
 func (worker *FileCopyWorker) AdjustedUrl(location *filer_pb.Location) string {
+	if *worker.options.volumeServerAccess == "publicUrl" {
+		return location.PublicUrl
+	}
 	return location.Url
 }
 

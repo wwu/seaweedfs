@@ -1,3 +1,4 @@
+{{- if or .Values.s3.enabled .Values.filer.s3.enabled }}
 {{- if .Values.s3.metricsPort }}
 {{- if .Values.global.monitoring.enabled }}
 apiVersion: monitoring.coreos.com/v1
@@ -11,6 +12,9 @@ metadata:
     app.kubernetes.io/managed-by: {{ .Release.Service }}
     app.kubernetes.io/instance: {{ .Release.Name }}
     app.kubernetes.io/component: s3
+    {{- with .Values.global.monitoring.additionalLabels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
 spec:
   endpoints:
     - interval: 30s
@@ -20,5 +24,6 @@ spec:
     matchLabels:
       app: {{ template "seaweedfs.name" . }}
       component: s3
+{{- end }}
 {{- end }}
 {{- end }}

@@ -19,6 +19,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle_map"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"golang.org/x/sync/errgroup"
 	"io"
 	"math"
 	"net/http"
@@ -89,6 +90,7 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 	purgeAbsent := fsckCommand.Bool("reallyDeleteFilerEntries", false, "<expert only!> delete missing file entries from filer if the corresponding volume is missing for any reason, please ensure all still existing/expected volumes are connected! used together with findMissingChunksInFiler")
 	tempPath := fsckCommand.String("tempPath", path.Join(os.TempDir()), "path for temporary idx files")
 	cutoffTimeAgo := fsckCommand.Duration("cutoffTimeAgo", 5*time.Minute, "only include entries  on volume servers before this cutoff time to check orphan chunks")
+	modifyTimeAgo := fsckCommand.Duration("modifyTimeAgo", 0, "only include entries after this modify time to check orphan chunks")
 	c.verifyNeedle = fsckCommand.Bool("verifyNeedles", false, "check needles status from volume server")
 
 	if err = fsckCommand.Parse(args); err != nil {
@@ -136,35 +138,52 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 		return fmt.Errorf("read filer buckets path: %v", err)
 	}
 
-	collectCutoffFromAtNs := time.Now().UnixNano()
+	var collectCutoffFromAtNs int64 = 0
+	if cutoffTimeAgo.Seconds() != 0 {
+		collectCutoffFromAtNs = time.Now().Add(-*cutoffTimeAgo).UnixNano()
+	}
+	var collectModifyFromAtNs int64 = 0
+	if modifyTimeAgo.Seconds() != 0 {
+		collectModifyFromAtNs = time.Now().Add(-*modifyTimeAgo).UnixNano()
+	}
 	// collect each volume file ids
-	for dataNodeId, volumeIdToVInfo := range dataNodeVolumeIdToVInfo {
-		for volumeId, vinfo := range volumeIdToVInfo {
-			if len(c.volumeIds) > 0 {
-				if _, ok := c.volumeIds[volumeId]; !ok {
+	eg, gCtx := errgroup.WithContext(context.Background())
+	_ = gCtx
+	for _dataNodeId, _volumeIdToVInfo := range dataNodeVolumeIdToVInfo {
+		dataNodeId, volumeIdToVInfo := _dataNodeId, _volumeIdToVInfo
+		eg.Go(func() error {
+			for volumeId, vinfo := range volumeIdToVInfo {
+				if len(c.volumeIds) > 0 {
+					if _, ok := c.volumeIds[volumeId]; !ok {
+						delete(volumeIdToVInfo, volumeId)
+						continue
+					}
+				}
+				if *c.collection != "" && vinfo.collection != *c.collection {
 					delete(volumeIdToVInfo, volumeId)
 					continue
 				}
+				err = c.collectOneVolumeFileIds(dataNodeId, volumeId, vinfo, uint64(collectModifyFromAtNs), uint64(collectCutoffFromAtNs))
+				if err != nil {
+					return fmt.Errorf("failed to collect file ids from volume %d on %s: %v", volumeId, vinfo.server, err)
+				}
 			}
-			if *c.collection != "" && vinfo.collection != *c.collection {
-				delete(volumeIdToVInfo, volumeId)
-				continue
+			if *c.verbose {
+				fmt.Fprintf(c.writer, "dn %+v filtred %d volumes and locations.\n", dataNodeId, len(dataNodeVolumeIdToVInfo[dataNodeId]))
 			}
-			cutoffFrom := time.Now().Add(-*cutoffTimeAgo).UnixNano()
-			err = c.collectOneVolumeFileIds(dataNodeId, volumeId, vinfo, uint64(cutoffFrom))
-			if err != nil {
-				return fmt.Errorf("failed to collect file ids from volume %d on %s: %v", volumeId, vinfo.server, err)
-			}
-		}
-		if *c.verbose {
-			fmt.Fprintf(c.writer, "dn %+v filtred %d volumes and locations.\n", dataNodeId, len(dataNodeVolumeIdToVInfo[dataNodeId]))
-		}
+			return nil
+		})
+	}
+	err = eg.Wait()
+	if err != nil {
+		fmt.Fprintf(c.writer, "got error: %v", err)
+		return err
 	}
 
 	if *c.findMissingChunksInFiler {
 		// collect all filer file ids and paths
 
-		if err = c.collectFilerFileIdAndPaths(dataNodeVolumeIdToVInfo, *purgeAbsent, collectCutoffFromAtNs); err != nil {
+		if err = c.collectFilerFileIdAndPaths(dataNodeVolumeIdToVInfo, *purgeAbsent, collectModifyFromAtNs, collectCutoffFromAtNs); err != nil {
 			return fmt.Errorf("collectFilerFileIdAndPaths: %v", err)
 		}
 		for dataNodeId, volumeIdToVInfo := range dataNodeVolumeIdToVInfo {
@@ -175,7 +194,7 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 		}
 	} else {
 		// collect all filer file ids
-		if err = c.collectFilerFileIdAndPaths(dataNodeVolumeIdToVInfo, false, 0); err != nil {
+		if err = c.collectFilerFileIdAndPaths(dataNodeVolumeIdToVInfo, false, 0, 0); err != nil {
 			return fmt.Errorf("failed to collect file ids from filer: %v", err)
 		}
 		// volume file ids subtract filer file ids
@@ -187,7 +206,7 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 	return nil
 }
 
-func (c *commandVolumeFsck) collectFilerFileIdAndPaths(dataNodeVolumeIdToVInfo map[string]map[uint32]VInfo, purgeAbsent bool, cutoffFromAtNs int64) error {
+func (c *commandVolumeFsck) collectFilerFileIdAndPaths(dataNodeVolumeIdToVInfo map[string]map[uint32]VInfo, purgeAbsent bool, collectModifyFromAtNs int64, cutoffFromAtNs int64) error {
 	if *c.verbose {
 		fmt.Fprintf(c.writer, "checking each file from filer path %s...\n", c.getCollectFilerFilePath())
 	}
@@ -223,6 +242,9 @@ func (c *commandVolumeFsck) collectFilerFileIdAndPaths(dataNodeVolumeIdToVInfo m
 			dataChunks = append(dataChunks, manifestChunks...)
 			for _, chunk := range dataChunks {
 				if cutoffFromAtNs != 0 && chunk.ModifiedTsNs > cutoffFromAtNs {
+					continue
+				}
+				if collectModifyFromAtNs != 0 && chunk.ModifiedTsNs < collectModifyFromAtNs {
 					continue
 				}
 				outputChan <- &Item{
@@ -372,7 +394,7 @@ func (c *commandVolumeFsck) findExtraChunksInVolumeServers(dataNodeVolumeIdToVIn
 	return nil
 }
 
-func (c *commandVolumeFsck) collectOneVolumeFileIds(dataNodeId string, volumeId uint32, vinfo VInfo, cutoffFrom uint64) error {
+func (c *commandVolumeFsck) collectOneVolumeFileIds(dataNodeId string, volumeId uint32, vinfo VInfo, modifyFrom uint64, cutoffFrom uint64) error {
 
 	if *c.verbose {
 		fmt.Fprintf(c.writer, "collecting volume %d file ids from %s ...\n", volumeId, vinfo.server)
@@ -409,7 +431,7 @@ func (c *commandVolumeFsck) collectOneVolumeFileIds(dataNodeId string, volumeId 
 				}
 				buf.Write(resp.FileContent)
 			}
-			if !vinfo.isReadOnly {
+			if !vinfo.isReadOnly && (modifyFrom != 0 || cutoffFrom != 0) {
 				index, err := idx.FirstInvalidIndex(buf.Bytes(),
 					func(key types.NeedleId, offset types.Offset, size types.Size) (bool, error) {
 						resp, err := volumeServerClient.ReadNeedleMeta(context.Background(), &volume_server_pb.ReadNeedleMetaRequest{
@@ -421,7 +443,10 @@ func (c *commandVolumeFsck) collectOneVolumeFileIds(dataNodeId string, volumeId 
 						if err != nil {
 							return false, fmt.Errorf("read needle meta with id %d from volume %d: %v", key, volumeId, err)
 						}
-						return resp.AppendAtNs <= cutoffFrom, nil
+						if (modifyFrom == 0 || modifyFrom <= resp.AppendAtNs) && (cutoffFrom == 0 || resp.AppendAtNs <= cutoffFrom) {
+							return true, nil
+						}
+						return false, nil
 					})
 				if err != nil {
 					fmt.Fprintf(c.writer, "Failed to search for last valid index on volume %d with error %v\n", volumeId, err)
@@ -626,9 +651,12 @@ func (c *commandVolumeFsck) collectVolumeIds() (volumeIdToServer map[string]map[
 	}
 
 	eachDataNode(topologyInfo, func(dc string, rack RackId, t *master_pb.DataNodeInfo) {
+		var volumeCount, ecShardCount int
+		dataNodeId := t.GetId()
 		for _, diskInfo := range t.DiskInfos {
-			dataNodeId := t.GetId()
-			volumeIdToServer[dataNodeId] = make(map[uint32]VInfo)
+			if _, ok := volumeIdToServer[dataNodeId]; !ok {
+				volumeIdToServer[dataNodeId] = make(map[uint32]VInfo)
+			}
 			for _, vi := range diskInfo.VolumeInfos {
 				volumeIdToServer[dataNodeId][vi.Id] = VInfo{
 					server:     pb.NewServerAddressFromDataNode(t),
@@ -636,6 +664,7 @@ func (c *commandVolumeFsck) collectVolumeIds() (volumeIdToServer map[string]map[
 					isEcVolume: false,
 					isReadOnly: vi.ReadOnly,
 				}
+				volumeCount += 1
 			}
 			for _, ecShardInfo := range diskInfo.EcShardInfos {
 				volumeIdToServer[dataNodeId][ecShardInfo.Id] = VInfo{
@@ -644,10 +673,11 @@ func (c *commandVolumeFsck) collectVolumeIds() (volumeIdToServer map[string]map[
 					isEcVolume: true,
 					isReadOnly: true,
 				}
+				ecShardCount += 1
 			}
-			if *c.verbose {
-				fmt.Fprintf(c.writer, "dn %+v collected %d volumes and locations.\n", dataNodeId, len(volumeIdToServer[dataNodeId]))
-			}
+		}
+		if *c.verbose {
+			fmt.Fprintf(c.writer, "dn %+v collected %d volumes and %d ec shards.\n", dataNodeId, volumeCount, ecShardCount)
 		}
 	})
 	return

@@ -52,7 +52,7 @@ var cmdMasterFollower = &Command{
 	In most cases, the master follower is not needed. In big data centers with thousands of volume
 	servers. In theory, the master may have trouble to keep up with the write requests and read requests.
 
-	The master follower can relieve the master from from read requests, which only needs to
+	The master follower can relieve the master from read requests, which only needs to
 	lookup a fileId or volumeId.
 
 	The master follower currently can handle fileId lookup requests:
@@ -140,7 +140,7 @@ func startMasterFollower(masterOptions MasterOptions) {
 	}
 	go grpcS.Serve(grpcL)
 
-	go ms.MasterClient.KeepConnectedToMaster()
+	go ms.MasterClient.KeepConnectedToMaster(context.Background())
 
 	// start http server
 	httpS := &http.Server{Handler: r}
