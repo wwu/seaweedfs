@@ -79,6 +79,7 @@ func init() {
 		}).DialContext,
 		MaxIdleConns:        1024,
 		MaxIdleConnsPerHost: 1024,
+		Proxy:               http.ProxyFromEnvironment,
 	}}
 }
 
