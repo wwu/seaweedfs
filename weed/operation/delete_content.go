@@ -102,7 +102,7 @@ func DeleteFilesWithLookupVolumeId(grpcDialOption grpc.DialOption, fileIds []str
 		go func(server pb.ServerAddress, fidList []string) {
 			defer wg.Done()
 
-			if deleteResults, deleteErr := DeleteFilesAtOneVolumeServer(server, grpcDialOption, fidList, false); deleteErr != nil {
+			if deleteResults, deleteErr := DeleteFilesAtOneVolumeServer(server, grpcDialOption, fidList, true); deleteErr != nil {
 				err = deleteErr
 			} else if deleteResults != nil {
 				resultChan <- deleteResults
